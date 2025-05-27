@@ -3,7 +3,7 @@
 use bevy::{picking::backend::ray::RayMap, platform::collections::HashSet, prelude::*};
 use common_assets::Common;
 use flycam::CameraControls;
-use voxels::{CommittedEditorState, VoxelMarker, Voxels, VOXEL_SIZE};
+use voxels::{CommittedEditorState, VOXEL_SIZE, VoxelMarker, Voxels};
 
 pub mod common_assets;
 pub mod flycam;
