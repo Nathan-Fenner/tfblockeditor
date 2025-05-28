@@ -1,17 +1,24 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
+  <body style="margin: 0px">
+    <script type="module">
+      import "./tfbe.js";
+      import "./restart-audio-context.js";
+      import init from "./bevy_game.js";
 
-<body style="margin: 0px;">
-  <script type="module">
-    import './restart-audio-context.js'
-    import init from './bevy_game.js'
-
-    init().catch((error) => {
-      if (!error.message.startsWith("Using exceptions for control flow, don't mind me. This isn't actually an error!")) {
-        throw error;
-      }
-    });
-  </script>
-</body>
-
+      init()
+        .catch((error) => {
+          if (
+            !error.message.startsWith(
+              "Using exceptions for control flow, don't mind me. This isn't actually an error!"
+            )
+          ) {
+            throw error;
+          }
+        })
+        .then((thing) => {
+          console.info({ thing });
+        });
+    </script>
+  </body>
 </html>

@@ -17,6 +17,8 @@ opt-level = 3
 
 [dependencies]
 bevy = "0.16"
+vmf-forge = "0.4.0"
+wasm-bindgen = "0.2.100"
 
 # These lints may be important signals about code quality, but normal Bevy code
 # commonly triggers them and the CI workflow treats them as errors, so we've
