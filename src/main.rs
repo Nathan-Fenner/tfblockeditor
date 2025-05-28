@@ -1,6 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 
-use bevy::{picking::backend::ray::RayMap, platform::collections::HashSet, prelude::*};
+use bevy::{
+    picking::backend::ray::RayMap,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    render::mesh::PlaneMeshBuilder,
+};
 use common_assets::Common;
 use flycam::CameraControls;
 use voxels::{CommittedEditorState, VOXEL_SIZE, VoxelMarker, Voxels};
@@ -43,6 +48,8 @@ fn setup(
     let grid_texture: Handle<Image> = asset_server.load("grid.png");
     let common = Common {
         cube_mesh: meshes.add(Cuboid::new(1., 1., 1.).mesh()),
+        plane_mesh: meshes.add(PlaneMeshBuilder::default().normal(Dir3::Z).build()),
+
         gray_material: materials.add(StandardMaterial {
             base_color_texture: Some(grid_texture.clone()),
             perceptual_roughness: 1.0,
@@ -64,6 +71,15 @@ fn setup(
             base_color: Color::linear_rgb(0.3, 0.3, 0.3),
             base_color_texture: Some(grid_texture.clone()),
             perceptual_roughness: 1.0,
+            ..default()
+        }),
+        sky_material: materials.add(StandardMaterial {
+            base_color_texture: Some(asset_server.load("grid.png")),
+            base_color: Color::linear_rgb(0.3, 0.7, 0.9),
+            perceptual_roughness: 1.0,
+            emissive: LinearRgba::new(0.1, 0.2, 0.3, 1.0),
+
+            alpha_mode: AlphaMode::Mask(0.5),
             ..default()
         }),
     };
@@ -118,7 +134,6 @@ fn editor_select_system(
     mut cast: MeshRayCast,
     ray_map: Res<RayMap>, // The ray map stores rays cast by the cursor
     voxel_marker: Query<&VoxelMarker>,
-    // mut voxels: ResMut<Voxels>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut selected: ResMut<EditorSelected>,
@@ -322,9 +337,12 @@ fn editor_select_preview_system(
 }
 
 fn editor_record_system(mut voxels: ResMut<Voxels>, editor_selected: ResMut<EditorSelected>) {
-    voxels.editor_state_before = Some(CommittedEditorState {
+    let new_commited_state = Some(CommittedEditorState {
         selection: editor_selected.0.iter().copied().collect(),
     });
+    if voxels.editor_state_before != new_commited_state {
+        voxels.editor_state_before = new_commited_state;
+    }
 }
 
 fn editor_undo_system(
@@ -349,9 +367,75 @@ fn editor_undo_system(
     }
 }
 
+#[derive(Clone, Component, Eq, PartialEq, Hash, Debug)]
+struct VizuSky {
+    voxel: IVec3,
+}
+
+struct VizuMap {
+    existing: HashMap<VizuSky, Option<Entity>>,
+    to_spawn: Vec<Box<dyn FnOnce(&mut Commands, &Common)>>,
+    refreshed: HashSet<VizuSky>,
+}
+
+impl VizuMap {
+    pub fn new(query: &Query<(Entity, &VizuSky)>) -> Self {
+        Self {
+            existing: query
+                .iter()
+                .map(|(entity, key)| (key.clone(), Some(entity)))
+                .collect(),
+            to_spawn: Vec::new(),
+            refreshed: HashSet::new(),
+        }
+    }
+
+    /// Adds an item to be spawned.
+    pub fn add(&mut self, key: VizuSky, f: impl FnOnce(&mut EntityCommands, &Common) + 'static) {
+        self.refreshed.insert(key.clone());
+        if self.existing.contains_key(&key) {
+            return;
+        }
+        self.existing.insert(key.clone(), None);
+        self.to_spawn.push(Box::new(move |commands, common| {
+            let spawn_entity = commands
+                .spawn((Transform::IDENTITY, Visibility::default(), key))
+                .id();
+
+            f(&mut commands.entity(spawn_entity), common);
+        }));
+    }
+
+    /// Draws all of the items.
+    pub fn draw(mut self, commands: &mut Commands, common: &Common) {
+        for (existing_key, existing_entity) in self.existing.iter() {
+            if let Some(existing_entity) = existing_entity {
+                if !self.refreshed.contains(existing_key) {
+                    commands.entity(*existing_entity).despawn();
+                }
+            }
+        }
+        for to_spawn in std::mem::take(&mut self.to_spawn) {
+            to_spawn(commands, common);
+        }
+    }
+}
+
 /// Visualizes the play area.
-fn editor_visualize_area_system(mut gizmos: Gizmos, voxels: Res<Voxels>, common: Res<Common>) {
+fn editor_visualize_area_system(
+    mut commands: Commands,
+    voxels: Res<Voxels>,
+    common: Res<Common>,
+
+    vizus: Query<(Entity, &VizuSky)>,
+) {
+    if !voxels.is_changed() {
+        return;
+    }
+
     let sky_height_voxels = 10;
+
+    let mut vizu_map = VizuMap::new(&vizus);
 
     let mut reachable: HashSet<IVec3> = HashSet::new();
     for (p, voxel) in voxels.iter_voxels() {
@@ -380,26 +464,24 @@ fn editor_visualize_area_system(mut gizmos: Gizmos, voxels: Res<Voxels>, common:
             IVec3::NEG_Z,
         ] {
             let q = p + d;
-            if !reachable_extended.contains(&q) {
+            if !reachable_extended.contains(&q) && !voxels.has_voxel(q) {
                 let center = VoxelMarker(p)
                     .center()
                     .lerp(VoxelMarker(p + d).center(), 0.5);
 
-                gizmos.rect(
-                    Transform::from_translation(center)
-                        .looking_to(d.as_vec3(), Vec3::ONE)
-                        .to_isometry(),
-                    Vec2::splat(VOXEL_SIZE / 5.),
-                    Color::linear_rgb(0.5, 0.8, 0.99),
-                );
-                // gizmos.sphere(
-                //     Transform::from_translation(VoxelMarker(p).center()).to_isometry(),
-                //     VOXEL_SIZE / 20.,
-                //     ,
-                // );
+                vizu_map.add(VizuSky { voxel: p * 3 + d }, move |commands, common| {
+                    commands.with_child((
+                        Mesh3d(common.plane_mesh.clone()),
+                        MeshMaterial3d(common.sky_material.clone()),
+                        Transform::from_translation(center)
+                            .looking_to(d.as_vec3(), if d.y == 0 { Vec3::Y } else { Vec3::X })
+                            .with_scale(Vec3::splat(VOXEL_SIZE * 0.9)),
+                    ));
+                });
             }
         }
     }
+    vizu_map.draw(&mut commands, &common);
 }
 
 static EDITABLE_LEVEL: std::sync::Mutex<Option<vmf_forge::VmfFile>> = std::sync::Mutex::new(None);

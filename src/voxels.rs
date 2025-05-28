@@ -48,7 +48,7 @@ impl VoxelMarker {
 }
 
 /// A snapshot of the editor state, for applying undos.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedEditorState {
     pub selection: Vec<SelectedFace>,
 }
