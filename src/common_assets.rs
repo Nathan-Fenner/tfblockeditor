@@ -7,4 +7,5 @@ pub struct Common {
     pub gray_material: Handle<StandardMaterial>,
     pub blue_material: Handle<StandardMaterial>,
     pub red_material: Handle<StandardMaterial>,
+    pub outside_material: Handle<StandardMaterial>,
 }

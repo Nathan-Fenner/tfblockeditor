@@ -162,8 +162,14 @@ impl Voxels {
     pub fn has_voxel(&self, voxel: IVec3) -> bool {
         self.voxel_fill.contains_key(&voxel)
     }
+
+    /// Gets the voxel at the specified location, if any.
+    pub fn get_voxel(&self, voxel: IVec3) -> Option<&VoxelInfo> {
+        self.voxel_fill.get(&voxel)
+    }
+
     pub fn get_material(&self, voxel: IVec3) -> Option<Handle<StandardMaterial>> {
-        Some(self.voxel_fill.get(&voxel)?.material.clone())
+        Some(self.get_voxel(voxel)?.material.clone())
     }
 
     /// Despawns and re-spawns the voxel at the given location.
@@ -287,6 +293,11 @@ impl Voxels {
         }
 
         last_editor_state
+    }
+
+    /// Iterates through all of the voxels in the grid.
+    pub fn iter_voxels(&self) -> impl Iterator<Item = (IVec3, &VoxelInfo)> {
+        self.voxel_fill.iter().map(|(p, v)| (*p, v))
     }
 }
 

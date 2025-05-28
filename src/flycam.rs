@@ -58,7 +58,7 @@ fn control_camera_system(
             }
 
             angle_altitude =
-                angle_altitude.clamp(-std::f32::consts::PI * 0.99, std::f32::consts::PI * 0.99);
+                angle_altitude.clamp(-std::f32::consts::PI * 0.49, std::f32::consts::PI * 0.49);
 
             camera_transform.look_to(
                 Vec3::new(

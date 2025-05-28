@@ -27,6 +27,7 @@ fn main() {
                 editor_select_system,
                 editor_select_preview_system,
                 editor_undo_system,
+                editor_visualize_area_system,
             )
                 .chain(),
         )
@@ -54,8 +55,14 @@ fn setup(
             ..default()
         }),
         blue_material: materials.add(StandardMaterial {
-            base_color_texture: Some(grid_texture),
+            base_color_texture: Some(grid_texture.clone()),
             base_color: Color::linear_rgb(0.4, 0.5, 0.96),
+            perceptual_roughness: 1.0,
+            ..default()
+        }),
+        outside_material: materials.add(StandardMaterial {
+            base_color: Color::linear_rgb(0.3, 0.3, 0.3),
+            base_color_texture: Some(grid_texture.clone()),
             perceptual_roughness: 1.0,
             ..default()
         }),
@@ -113,10 +120,13 @@ fn editor_select_system(
     voxel_marker: Query<&VoxelMarker>,
     // mut voxels: ResMut<Voxels>,
     mouse_button: Res<ButtonInput<MouseButton>>,
-
+    keys: Res<ButtonInput<KeyCode>>,
     mut selected: ResMut<EditorSelected>,
 ) {
-    if mouse_button.just_pressed(MouseButton::Left) {
+    if mouse_button.just_pressed(MouseButton::Left)
+        && !keys.pressed(KeyCode::ShiftLeft)
+        && !keys.pressed(KeyCode::ShiftRight)
+    {
         selected.0.clear();
     }
 
@@ -173,6 +183,9 @@ fn editor_select_preview_system(
     }
     if keys.just_pressed(KeyCode::Digit3) {
         current_material.0 = common.blue_material.clone();
+    }
+    if keys.just_pressed(KeyCode::Digit4) {
+        current_material.0 = common.outside_material.clone();
     }
 
     for face in selected.0.iter() {
@@ -333,6 +346,59 @@ fn editor_undo_system(
 
         // Revert the editor state to how it was before the action that was just undone.
         editor_selected.0 = undo_editor.selection.into_iter().collect();
+    }
+}
+
+/// Visualizes the play area.
+fn editor_visualize_area_system(mut gizmos: Gizmos, voxels: Res<Voxels>, common: Res<Common>) {
+    let sky_height_voxels = 10;
+
+    let mut reachable: HashSet<IVec3> = HashSet::new();
+    for (p, voxel) in voxels.iter_voxels() {
+        if voxel.material != common.outside_material {
+            reachable.insert(p);
+        }
+    }
+    let mut reachable_extended = reachable.clone();
+    for &p in &reachable {
+        for y in 1..=sky_height_voxels {
+            let p_up = p + IVec3::new(0, y, 0);
+            if reachable_extended.contains(&p_up) || voxels.has_voxel(p_up) {
+                break;
+            }
+            reachable_extended.insert(p_up);
+        }
+    }
+
+    for &p in reachable_extended.iter() {
+        for d in [
+            IVec3::X,
+            IVec3::Y,
+            IVec3::Z,
+            IVec3::NEG_X,
+            IVec3::NEG_Y,
+            IVec3::NEG_Z,
+        ] {
+            let q = p + d;
+            if !reachable_extended.contains(&q) {
+                let center = VoxelMarker(p)
+                    .center()
+                    .lerp(VoxelMarker(p + d).center(), 0.5);
+
+                gizmos.rect(
+                    Transform::from_translation(center)
+                        .looking_to(d.as_vec3(), Vec3::ONE)
+                        .to_isometry(),
+                    Vec2::splat(VOXEL_SIZE / 5.),
+                    Color::linear_rgb(0.5, 0.8, 0.99),
+                );
+                // gizmos.sphere(
+                //     Transform::from_translation(VoxelMarker(p).center()).to_isometry(),
+                //     VOXEL_SIZE / 20.,
+                //     ,
+                // );
+            }
+        }
     }
 }
 

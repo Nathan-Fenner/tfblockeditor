@@ -10,7 +10,6 @@ window.tfbe_set_instance = (doneInstance) => {
   instance = doneInstance;
 };
 
-console.info("create button");
 const loadInputButton = document.createElement("input");
 loadInputButton.type = "file";
 loadInputButton.accept = ".vmf";
