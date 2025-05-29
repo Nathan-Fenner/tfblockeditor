@@ -1,6 +1,6 @@
 use bevy::{platform::collections::HashMap, prelude::*};
 
-use crate::{SelectedFace, common_assets::Common};
+use crate::common_assets::Common;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct VoxelInfo {
@@ -47,6 +47,11 @@ impl VoxelMarker {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+pub struct SelectedFace {
+    pub voxel: IVec3,
+    pub normal: IVec3,
+}
 /// A snapshot of the editor state, for applying undos.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedEditorState {
