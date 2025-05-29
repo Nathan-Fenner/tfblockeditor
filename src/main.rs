@@ -8,6 +8,7 @@ use bevy::{
 };
 use common_assets::Common;
 use flycam::CameraControls;
+use std::hash::Hash;
 use voxels::{CommittedEditorState, VOXEL_SIZE, VoxelMarker, Voxels};
 
 pub mod common_assets;
@@ -372,14 +373,14 @@ struct VizuSky {
     voxel: IVec3,
 }
 
-struct VizuMap {
-    existing: HashMap<VizuSky, Option<Entity>>,
+struct VizuMap<C: Component + Eq + Hash + Clone> {
+    existing: HashMap<C, Option<Entity>>,
     to_spawn: Vec<Box<dyn FnOnce(&mut Commands, &Common)>>,
-    refreshed: HashSet<VizuSky>,
+    refreshed: HashSet<C>,
 }
 
-impl VizuMap {
-    pub fn new(query: &Query<(Entity, &VizuSky)>) -> Self {
+impl<C: Component + Eq + Hash + Clone> VizuMap<C> {
+    pub fn new(query: &Query<(Entity, &C)>) -> Self {
         Self {
             existing: query
                 .iter()
@@ -391,7 +392,7 @@ impl VizuMap {
     }
 
     /// Adds an item to be spawned.
-    pub fn add(&mut self, key: VizuSky, f: impl FnOnce(&mut EntityCommands, &Common) + 'static) {
+    pub fn add(&mut self, key: C, f: impl FnOnce(&mut EntityCommands, &Common) + 'static) {
         self.refreshed.insert(key.clone());
         if self.existing.contains_key(&key) {
             return;
@@ -428,12 +429,15 @@ fn editor_visualize_area_system(
     common: Res<Common>,
 
     vizus: Query<(Entity, &VizuSky)>,
+
+    sky_visible: Local<bool>,
 ) {
     if !voxels.is_changed() {
         return;
     }
 
     let sky_height_voxels = 10;
+    let min_sky_height_voxels = 6;
 
     let mut vizu_map = VizuMap::new(&vizus);
 
@@ -443,44 +447,86 @@ fn editor_visualize_area_system(
             reachable.insert(p);
         }
     }
-    let mut reachable_extended = reachable.clone();
-    for &p in &reachable {
-        for y in 1..=sky_height_voxels {
-            let p_up = p + IVec3::new(0, y, 0);
-            if reachable_extended.contains(&p_up) || voxels.has_voxel(p_up) {
-                break;
+
+    if *sky_visible {
+        // Stores a mapping from voxel position to height above floor.
+        let mut reachable_extended: HashMap<IVec3, i32> =
+            reachable.iter().copied().map(|p| (p, 0)).collect();
+        for &p in &reachable {
+            for y in 1..=sky_height_voxels {
+                let p_up = p + IVec3::new(0, y, 0);
+                if reachable_extended.contains_key(&p_up) || voxels.has_voxel(p_up) {
+                    break;
+                }
+                reachable_extended.insert(p_up, y);
             }
-            reachable_extended.insert(p_up);
+        }
+
+        // Remove solid cells.
+        reachable_extended.retain(|_, v| *v != 0);
+
+        // Smooth out the sky ceiling a bit.
+        // Start at the highest cells - if an adjacent cell has a lower ceiling, delete this cell.
+        for _ in 0..10 {
+            let mut sky_cells = reachable_extended.keys().copied().collect::<Vec<_>>();
+            sky_cells.sort_by_key(|p| -p.y);
+            for p in sky_cells {
+                if reachable_extended.contains_key(&(p + IVec3::Y)) {
+                    // Cannot remove a cell below another cell.
+                    continue;
+                }
+                if reachable_extended[&p] <= min_sky_height_voxels {
+                    // Cannot lower the ceiling past this point.
+                    continue;
+                }
+
+                let mut is_bump = false;
+                for d in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
+                    let n = p + d;
+                    if reachable_extended.contains_key(&n) || voxels.has_voxel(n) {
+                        continue;
+                    }
+                    if (1..=5).any(|dy| reachable_extended.contains_key(&(n + IVec3::NEG_Y * dy))) {
+                        is_bump = true;
+                        break;
+                    }
+                }
+
+                if is_bump {
+                    reachable_extended.remove(&p);
+                }
+            }
+        }
+
+        for &p in reachable_extended.keys() {
+            for d in [
+                IVec3::X,
+                IVec3::Y,
+                IVec3::Z,
+                IVec3::NEG_X,
+                IVec3::NEG_Y,
+                IVec3::NEG_Z,
+            ] {
+                let q = p + d;
+                if !reachable_extended.contains_key(&q) && !voxels.has_voxel(q) {
+                    let center = VoxelMarker(p)
+                        .center()
+                        .lerp(VoxelMarker(p + d).center(), 0.5);
+
+                    vizu_map.add(VizuSky { voxel: p * 3 + d }, move |commands, common| {
+                        commands.with_child((
+                            Mesh3d(common.plane_mesh.clone()),
+                            MeshMaterial3d(common.sky_material.clone()),
+                            Transform::from_translation(center)
+                                .looking_to(d.as_vec3(), if d.y == 0 { Vec3::Y } else { Vec3::X })
+                                .with_scale(Vec3::splat(VOXEL_SIZE * 0.9)),
+                        ));
+                    });
+                }
+            }
         }
     }
 
-    for &p in reachable_extended.iter() {
-        for d in [
-            IVec3::X,
-            IVec3::Y,
-            IVec3::Z,
-            IVec3::NEG_X,
-            IVec3::NEG_Y,
-            IVec3::NEG_Z,
-        ] {
-            let q = p + d;
-            if !reachable_extended.contains(&q) && !voxels.has_voxel(q) {
-                let center = VoxelMarker(p)
-                    .center()
-                    .lerp(VoxelMarker(p + d).center(), 0.5);
-
-                vizu_map.add(VizuSky { voxel: p * 3 + d }, move |commands, common| {
-                    commands.with_child((
-                        Mesh3d(common.plane_mesh.clone()),
-                        MeshMaterial3d(common.sky_material.clone()),
-                        Transform::from_translation(center)
-                            .looking_to(d.as_vec3(), if d.y == 0 { Vec3::Y } else { Vec3::X })
-                            .with_scale(Vec3::splat(VOXEL_SIZE * 0.9)),
-                    ));
-                });
-            }
-        }
-    }
     vizu_map.draw(&mut commands, &common);
 }
 
