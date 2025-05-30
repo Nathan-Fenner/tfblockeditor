@@ -109,6 +109,38 @@ fn project_onto_i2(a: IVec2, (p, q): (IVec2, IVec2)) -> Vec2 {
     project_onto_v2(a.as_vec2(), (p.as_vec2(), q.as_vec2()))
 }
 
+fn point_closest_to_segment(p: Vec2, line: (Vec2, Vec2)) -> Vec2 {
+    // Project p onto the line.
+    let p_on_line = project_onto_v2(p, line);
+
+    let d = (line.1 - line.0).normalize();
+
+    let t = (p_on_line - line.0).dot(d) / (line.0.distance(line.1));
+    let t = t.clamp(0.0, 1.0);
+
+    line.0.lerp(line.1, t)
+}
+
+fn segments_cross(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
+    let (p1, p2) = a;
+    let (q1, q2) = b;
+
+    let r = p2 - p1;
+    let s = q2 - q1;
+    let pq = q1 - p1;
+    let rxs = r.perp_dot(s);
+
+    if rxs == 0.0 {
+        // Lines are parallel (or colinear)
+        return false;
+    }
+
+    let t = pq.perp_dot(s) / rxs;
+    let u = pq.perp_dot(r) / rxs;
+
+    (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
+}
+
 fn edit_polygon_system(
     mut gizmos: Gizmos,
     mut points: Local<Vec<IVec2>>,
@@ -116,7 +148,12 @@ fn edit_polygon_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
 
     mut editor_world: ResMut<EditorWorld>,
+    keys: Res<ButtonInput<KeyCode>>,
 ) {
+    if keys.just_pressed(KeyCode::Escape) {
+        points.clear();
+    }
+
     let color_active = Color::linear_rgb(1., 1., 0.);
     let color_speculative = Color::linear_rgb(0., 0., 1.);
     let color_invalid = Color::linear_rgb(1., 0., 0.);
@@ -150,14 +187,16 @@ fn edit_polygon_system(
 
         let mouse_point_grid = to_flat(mouse_point_grid);
 
-        if points.contains(&mouse_point_grid) {
-            // We treat this as closing the loop, regardless of which point is selected.
-            return true;
-        }
         if points.len() <= 1 {
             // No possible invalid states.
             return true;
         }
+
+        if points.len() == 2 && mouse_point_grid == points[0] {
+            return false;
+        }
+
+        let min_thickness = 0.5;
 
         let new_line: (IVec2, IVec2) = (points.last().copied().unwrap(), mouse_point_grid);
         // If this line crosses any existing line, it is invalid.
@@ -166,25 +205,31 @@ fn edit_polygon_system(
                 continue;
             }
             // Project p onto the line.
-            let p_on_line = project_onto_i2(p, new_line);
+            let p_on_line =
+                point_closest_to_segment(p.as_vec2(), (new_line.0.as_vec2(), new_line.1.as_vec2()));
 
-            let d = (new_line.1 - new_line.0).as_vec2().normalize();
-
-            let t = (p_on_line - new_line.0.as_vec2()).dot(d)
-                / (new_line.0.as_vec2().distance(new_line.1.as_vec2()));
-            let t = t.clamp(0.0, 1.0);
-
-            let p_on_line = new_line.0.as_vec2().lerp(new_line.1.as_vec2(), t);
-
-            gizmos.sphere(
-                p_on_line.extend(0.).xzy() * VOXEL_SIZE,
-                16.,
-                Color::linear_rgb(1., 0.5, 0.2),
-            );
-
-            if p_on_line.distance(p.as_vec2()) < 0.5 {
+            if p_on_line.distance(p.as_vec2()) < min_thickness {
                 // This point is too close to the line.
                 return false;
+            }
+        }
+
+        if points.len() >= 2 {
+            for i in 0..points.len() - 1 {
+                if points[i] == mouse_point_grid || points[i + 1] == mouse_point_grid {
+                    continue;
+                }
+                let existing_line = (points[i].as_vec2(), points[i + 1].as_vec2());
+                let near = point_closest_to_segment(mouse_point_grid.as_vec2(), existing_line);
+                if mouse_point_grid.as_vec2().distance(near) < min_thickness {
+                    return false;
+                }
+
+                if i + 2 < points.len()
+                    && segments_cross(existing_line, (new_line.0.as_vec2(), new_line.1.as_vec2()))
+                {
+                    return false;
+                }
             }
         }
 
@@ -204,7 +249,7 @@ fn edit_polygon_system(
         );
 
         if mouse_button.just_pressed(MouseButton::Left) {
-            if points.contains(&to_flat(mouse_point_grid)) {
+            if points.len() >= 3 && to_flat(mouse_point_grid) == points[0] {
                 if points.len() >= 3 {
                     // Complete the shape.
                     editor_world
