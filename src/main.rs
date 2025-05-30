@@ -5,7 +5,7 @@ use building::Building;
 use common_assets::Common;
 use flycam::CameraControls;
 
-use voxels::{VOXEL_SIZE, Voxels};
+use voxels::VOXEL_SIZE;
 
 pub mod building;
 pub mod common_assets;
@@ -105,6 +105,7 @@ fn project_onto_v2(a: Vec2, (p, q): (Vec2, Vec2)) -> Vec2 {
     (a - p).dot((q - p).normalize()) * (q - p).normalize() + p
 }
 
+#[allow(unused)]
 fn project_onto_i2(a: IVec2, (p, q): (IVec2, IVec2)) -> Vec2 {
     project_onto_v2(a.as_vec2(), (p.as_vec2(), q.as_vec2()))
 }
@@ -150,13 +151,17 @@ fn edit_polygon_system(
     mut editor_world: ResMut<EditorWorld>,
     keys: Res<ButtonInput<KeyCode>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        points.clear();
-    }
+    let wall_thickness = 0.125;
+    // How far we're allowed to eat into a wall segment at a corner due to the wall thickness.
+    let min_extended = 0.45;
 
     let color_active = Color::linear_rgb(1., 1., 0.);
     let color_speculative = Color::linear_rgb(0., 0., 1.);
     let color_invalid = Color::linear_rgb(1., 0., 0.);
+
+    if keys.just_pressed(KeyCode::Escape) {
+        points.clear();
+    }
 
     let mouse_ray = ray_map.iter().next().map(|r| *r.1);
 
@@ -182,7 +187,7 @@ fn edit_polygon_system(
 
     let new_point_is_valid = (|| {
         let Some(mouse_point_grid) = mouse_point_grid else {
-            return true;
+            return false;
         };
 
         let mouse_point_grid = to_flat(mouse_point_grid);
@@ -193,6 +198,29 @@ fn edit_polygon_system(
         }
 
         if points.len() == 2 && mouse_point_grid == points[0] {
+            return false;
+        }
+
+        if points.len() >= 3 && mouse_point_grid == points[0] {
+            // If the corner is too sharp, then we have a problem.
+            let a = points[1];
+            let pivot = points[0];
+            let b = points[points.len() - 1];
+
+            let angle = (a - pivot)
+                .as_vec2()
+                .normalize()
+                .dot((b - pivot).as_vec2().normalize())
+                .acos();
+
+            let max_movement = wall_thickness / (angle / 2.0).sin();
+
+            if max_movement >= min_extended {
+                return false;
+            }
+        }
+
+        if mouse_point_grid != points[0] && points.contains(&mouse_point_grid) {
             return false;
         }
 
@@ -233,6 +261,24 @@ fn edit_polygon_system(
             }
         }
 
+        if points.len() >= 2 {
+            // If the corner is too sharp, then we have a problem.
+            let a = points[points.len() - 2];
+            let pivot = points[points.len() - 1];
+
+            let angle = (a - pivot)
+                .as_vec2()
+                .normalize()
+                .dot((mouse_point_grid - pivot).as_vec2().normalize())
+                .acos();
+
+            let max_movement = wall_thickness / (angle / 2.0).sin();
+
+            if max_movement >= min_extended {
+                return false;
+            }
+        }
+
         true
     })();
 
@@ -249,15 +295,11 @@ fn edit_polygon_system(
         );
 
         if mouse_button.just_pressed(MouseButton::Left) {
-            if points.len() >= 3 && to_flat(mouse_point_grid) == points[0] {
-                if points.len() >= 3 {
-                    // Complete the shape.
-                    editor_world
-                        .buildings
-                        .push(Building::new(editing_plane_y, std::mem::take(&mut *points)))
-                } else {
-                    points.clear();
-                }
+            if points.len() >= 3 && to_flat(mouse_point_grid) == points[0] && new_point_is_valid {
+                // Complete the shape.
+                editor_world
+                    .buildings
+                    .push(Building::new(editing_plane_y, std::mem::take(&mut *points)))
             } else if new_point_is_valid {
                 points.push(to_flat(mouse_point_grid));
             } else {
@@ -339,18 +381,7 @@ fn setup(
         buildings: Vec::new(),
     });
 
-    let mut voxels = Voxels::new_empty();
-    voxels.add_voxel(
-        &mut commands,
-        &common,
-        IVec3::new(0, 0, 0),
-        common.gray_material.clone(),
-    );
-
-    // commands.insert_resource(EditorCurrentMaterial(common.gray_material.clone()));
-    commands.insert_resource(voxels);
     commands.insert_resource(common);
-    // commands.insert_resource(EditorSelected(HashSet::new()));
 
     // Transform for the camera and lighting, looking at (0,0,0) (the position of the mesh).
     let camera_and_light_transform =
