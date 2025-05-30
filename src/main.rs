@@ -1,15 +1,22 @@
 #![allow(clippy::too_many_arguments)]
 
 use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
+use building::Building;
 use common_assets::Common;
 use flycam::CameraControls;
 
-use voxels::Voxels;
+use voxels::{VOXEL_SIZE, Voxels};
 
+pub mod building;
 pub mod common_assets;
 pub mod flycam;
 pub mod voxel_editor;
 pub mod voxels;
+
+#[derive(Resource)]
+struct EditorWorld {
+    buildings: Vec<Building>,
+}
 
 fn main() {
     App::new()
@@ -21,6 +28,15 @@ fn main() {
             ..default()
         }))
         .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                draw_grid_system,
+                edit_polygon_system,
+                draw_building_outlines_system,
+            )
+                .chain(),
+        )
         .add_plugins(flycam::FlyCameraPlugin)
         // .add_systems(
         //     Update,
@@ -34,6 +50,132 @@ fn main() {
         //         .chain(),
         // )
         .run();
+}
+
+fn draw_grid_system(mut gizmos: Gizmos) {
+    for x in -20..=20 {
+        for z in -20..=20 {
+            let p = Vec3::splat(VOXEL_SIZE) * Vec3::new(x as f32, 0.0, z as f32);
+            let k = 8.;
+            gizmos.line(
+                p - k * Vec3::X,
+                p + k * Vec3::X,
+                Color::linear_rgba(1., 1., 1., 0.5),
+            );
+            gizmos.line(
+                p - k * Vec3::Z,
+                p + k * Vec3::Z,
+                Color::linear_rgba(1., 1., 1., 0.5),
+            );
+        }
+    }
+}
+
+fn grid_to_world(p: IVec3) -> Vec3 {
+    p.as_vec3() * Vec3::splat(VOXEL_SIZE)
+}
+fn world_to_grid(p: Vec3) -> IVec3 {
+    (p / VOXEL_SIZE).round().as_ivec3()
+}
+
+fn from_flat(p: IVec2, y: i32) -> IVec3 {
+    IVec3::new(p.x, y, p.y)
+}
+fn to_flat(p: IVec3) -> IVec2 {
+    p.xz()
+}
+
+fn draw_building_outlines_system(mut gizmos: Gizmos, editor_world: Res<EditorWorld>) {
+    let color_active = Color::linear_rgb(1., 1., 0.);
+
+    for building in editor_world.buildings.iter() {
+        let points = building.points();
+        let floor_y = building.floor_y();
+
+        for i in 0..points.len() {
+            let point_a = grid_to_world(from_flat(points[i], floor_y));
+            let point_b = grid_to_world(from_flat(points[(i + 1) % points.len()], floor_y));
+            gizmos.sphere(point_a, 12., color_active);
+            gizmos.line(point_a, point_b, color_active);
+        }
+    }
+}
+
+fn edit_polygon_system(
+    mut gizmos: Gizmos,
+    mut points: Local<Vec<IVec2>>,
+    ray_map: Res<bevy::picking::backend::ray::RayMap>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+
+    mut editor_world: ResMut<EditorWorld>,
+) {
+    let color_active = Color::linear_rgb(1., 1., 0.);
+    let color_speculative = Color::linear_rgb(0., 0., 1.);
+
+    let mouse_ray = ray_map.iter().next().map(|r| *r.1);
+
+    let max_pick_distance = 10_000.0;
+
+    let editing_plane_y = 0;
+
+    let mouse_point: Option<Vec3> = (|| {
+        let mouse_ray = mouse_ray?;
+        let intersection_distance = mouse_ray.intersect_plane(
+            grid_to_world(IVec3::Y * editing_plane_y),
+            InfinitePlane3d::new(Vec3::Y),
+        )?;
+
+        if intersection_distance > max_pick_distance {
+            return None;
+        }
+
+        Some(mouse_ray.get_point(intersection_distance))
+    })();
+
+    let mouse_point_grid = mouse_point.map(world_to_grid);
+
+    if let Some(mouse_point_grid) = mouse_point_grid {
+        gizmos.sphere(grid_to_world(mouse_point_grid), 8., color_speculative);
+
+        if mouse_button.just_pressed(MouseButton::Left) {
+            if points.contains(&to_flat(mouse_point_grid)) {
+                if points.len() >= 3 {
+                    // Complete the shape.
+                    editor_world
+                        .buildings
+                        .push(Building::new(editing_plane_y, std::mem::take(&mut *points)))
+                } else {
+                    points.clear();
+                }
+            } else {
+                points.push(to_flat(mouse_point_grid));
+            }
+        }
+    }
+
+    for i in 0..points.len() {
+        let point_a = grid_to_world(from_flat(points[i], 0));
+        gizmos.sphere(point_a, 12., color_active);
+        let point_b = if i == points.len() - 1 {
+            // From the last point, draw a line to the cursor.
+            let Some(mouse_point_grid) = mouse_point_grid else {
+                continue;
+            };
+            grid_to_world(mouse_point_grid)
+        } else {
+            grid_to_world(from_flat(points[i + 1], 0))
+        };
+
+        gizmos.line(
+            point_a,
+            point_b,
+            if i == points.len() - 1 {
+                color_speculative
+            } else {
+                color_active
+            },
+        );
+    }
 }
 
 fn setup(
@@ -80,6 +222,10 @@ fn setup(
             ..default()
         }),
     };
+
+    commands.insert_resource(EditorWorld {
+        buildings: Vec::new(),
+    });
 
     let mut voxels = Voxels::new_empty();
     voxels.add_voxel(
