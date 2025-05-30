@@ -101,6 +101,14 @@ fn draw_building_outlines_system(mut gizmos: Gizmos, editor_world: Res<EditorWor
     }
 }
 
+fn project_onto_v2(a: Vec2, (p, q): (Vec2, Vec2)) -> Vec2 {
+    (a - p).dot((q - p).normalize()) * (q - p).normalize() + p
+}
+
+fn project_onto_i2(a: IVec2, (p, q): (IVec2, IVec2)) -> Vec2 {
+    project_onto_v2(a.as_vec2(), (p.as_vec2(), q.as_vec2()))
+}
+
 fn edit_polygon_system(
     mut gizmos: Gizmos,
     mut points: Local<Vec<IVec2>>,
@@ -111,6 +119,7 @@ fn edit_polygon_system(
 ) {
     let color_active = Color::linear_rgb(1., 1., 0.);
     let color_speculative = Color::linear_rgb(0., 0., 1.);
+    let color_invalid = Color::linear_rgb(1., 0., 0.);
 
     let mouse_ray = ray_map.iter().next().map(|r| *r.1);
 
@@ -134,8 +143,65 @@ fn edit_polygon_system(
 
     let mouse_point_grid = mouse_point.map(world_to_grid);
 
+    let new_point_is_valid = (|| {
+        let Some(mouse_point_grid) = mouse_point_grid else {
+            return true;
+        };
+
+        let mouse_point_grid = to_flat(mouse_point_grid);
+
+        if points.contains(&mouse_point_grid) {
+            // We treat this as closing the loop, regardless of which point is selected.
+            return true;
+        }
+        if points.len() <= 1 {
+            // No possible invalid states.
+            return true;
+        }
+
+        let new_line: (IVec2, IVec2) = (points.last().copied().unwrap(), mouse_point_grid);
+        // If this line crosses any existing line, it is invalid.
+        for p in points.iter().copied() {
+            if p == new_line.0 || p == new_line.1 {
+                continue;
+            }
+            // Project p onto the line.
+            let p_on_line = project_onto_i2(p, new_line);
+
+            let d = (new_line.1 - new_line.0).as_vec2().normalize();
+
+            let t = (p_on_line - new_line.0.as_vec2()).dot(d)
+                / (new_line.0.as_vec2().distance(new_line.1.as_vec2()));
+            let t = t.clamp(0.0, 1.0);
+
+            let p_on_line = new_line.0.as_vec2().lerp(new_line.1.as_vec2(), t);
+
+            gizmos.sphere(
+                p_on_line.extend(0.).xzy() * VOXEL_SIZE,
+                16.,
+                Color::linear_rgb(1., 0.5, 0.2),
+            );
+
+            if p_on_line.distance(p.as_vec2()) < 0.5 {
+                // This point is too close to the line.
+                return false;
+            }
+        }
+
+        true
+    })();
+
+    // Place the point, if it is valid.
     if let Some(mouse_point_grid) = mouse_point_grid {
-        gizmos.sphere(grid_to_world(mouse_point_grid), 8., color_speculative);
+        gizmos.sphere(
+            grid_to_world(mouse_point_grid),
+            8.,
+            if new_point_is_valid {
+                color_speculative
+            } else {
+                color_invalid
+            },
+        );
 
         if mouse_button.just_pressed(MouseButton::Left) {
             if points.contains(&to_flat(mouse_point_grid)) {
@@ -147,8 +213,10 @@ fn edit_polygon_system(
                 } else {
                     points.clear();
                 }
-            } else {
+            } else if new_point_is_valid {
                 points.push(to_flat(mouse_point_grid));
+            } else {
+                points.clear();
             }
         }
     }
@@ -156,25 +224,24 @@ fn edit_polygon_system(
     for i in 0..points.len() {
         let point_a = grid_to_world(from_flat(points[i], 0));
         gizmos.sphere(point_a, 12., color_active);
-        let point_b = if i == points.len() - 1 {
+        let (point_b, color) = if i == points.len() - 1 {
             // From the last point, draw a line to the cursor.
             let Some(mouse_point_grid) = mouse_point_grid else {
                 continue;
             };
-            grid_to_world(mouse_point_grid)
+            (
+                grid_to_world(mouse_point_grid),
+                if new_point_is_valid {
+                    color_speculative
+                } else {
+                    color_invalid
+                },
+            )
         } else {
-            grid_to_world(from_flat(points[i + 1], 0))
+            (grid_to_world(from_flat(points[i + 1], 0)), color_active)
         };
 
-        gizmos.line(
-            point_a,
-            point_b,
-            if i == points.len() - 1 {
-                color_speculative
-            } else {
-                color_active
-            },
-        );
+        gizmos.line(point_a, point_b, color);
     }
 }
 
