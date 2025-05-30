@@ -86,7 +86,7 @@ fn to_flat(p: IVec3) -> IVec2 {
 }
 
 fn draw_building_outlines_system(mut gizmos: Gizmos, editor_world: Res<EditorWorld>) {
-    let color_active = Color::linear_rgb(1., 1., 0.);
+    let color_active = Color::linear_rgb(1., 1., 0.5);
 
     for building in editor_world.buildings.iter() {
         let points = building.points();
