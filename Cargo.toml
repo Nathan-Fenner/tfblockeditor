@@ -17,7 +17,7 @@ opt-level = 3
 
 [dependencies]
 bevy = "0.16"
-csgrs = { version = "0.18" }
+csgrs = { version = "0.18.1" }
 nalgebra = "0.33.2"
 vmf-forge = "0.4.0"
 wasm-bindgen = "0.2.100"

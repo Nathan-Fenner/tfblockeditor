@@ -531,6 +531,9 @@ fn debug_csg_system(
 
     mut rendered: Local<Option<Entity>>,
 ) {
+    if !world_csg.is_changed() {
+        return;
+    }
     let world_csg = &world_csg.0;
     for poly in world_csg.polygons.iter() {
         let center: Vec3 = poly
