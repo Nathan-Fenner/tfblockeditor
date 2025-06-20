@@ -104,7 +104,9 @@ fn draw_building_outlines_system(mut gizmos: Gizmos, editor_world: Res<EditorWor
         for i in 0..points.len() {
             let point_a = grid_to_world(from_flat(points[i], floor_y));
             let point_b = grid_to_world(from_flat(points[(i + 1) % points.len()], floor_y));
-            gizmos.sphere(point_a, 12., color_active);
+            let mut point_mark = Isometry3d::from_translation(point_a);
+            point_mark.rotation *= Quat::from_rotation_x(std::f32::consts::PI / 2.);
+            gizmos.rect(point_mark, Vec2::splat(12.), color_active);
             gizmos.line(point_a, point_b, color_active);
         }
     }
@@ -395,32 +397,38 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
     let mut room_interior_csg: Vec<CSG> = Vec::new();
 
     struct RoomLayer<'a> {
-        lift: f64,
+        shift_y_floor: f64,
+        shift_y_ceiling: f64,
+        outside: bool,
         wall_width: f32,
         out: &'a mut Vec<CSG>,
     }
 
     let layers = [
         RoomLayer {
-            lift: 0.,
+            shift_y_floor: 0.,
+            shift_y_ceiling: 0.,
             wall_width: 0.,
+            outside: true,
             out: &mut out_buffer_csg,
         },
         RoomLayer {
-            lift: 0.4,
+            shift_y_floor: 0.1,
+            shift_y_ceiling: -0.1,
             wall_width: -0.1,
+            outside: false,
             out: &mut room_interior_csg,
         },
     ];
 
     for layer in layers {
         for room in world.buildings.iter() {
-            let y_top = room.floor_y() + 2;
-            let y_bot = room.floor_y();
+            let y_top = (room.floor_y() + 2) as f64 + layer.shift_y_ceiling;
+            let y_bot = room.floor_y() as f64 + layer.shift_y_floor;
             let points = room.points();
             let mut polygons: Vec<csgrs::polygon::Polygon<SurfaceDetail>> = Vec::new();
 
-            fn from_flat(v: Vec2, y: i32) -> Vec3 {
+            fn from_flat(v: Vec2, y: f64) -> Vec3 {
                 Vec3::new(v.x, y as f32, v.y)
             }
 
@@ -466,7 +474,9 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
 
                 polygons.push(Polygon::new(
                     vertices,
-                    Some(SurfaceDetail { outside: true }),
+                    Some(SurfaceDetail {
+                        outside: layer.outside,
+                    }),
                 ));
             }
 
@@ -488,7 +498,9 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
                         csgrs::vertex::Vertex::new(b1.to_point(), normal),
                         csgrs::vertex::Vertex::new(b0.to_point(), normal),
                     ],
-                    Some(SurfaceDetail { outside: true }),
+                    Some(SurfaceDetail {
+                        outside: layer.outside,
+                    }),
                 ));
             }
 
@@ -542,7 +554,6 @@ fn debug_csg_system(
             .map(|v| Vec3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32))
             .fold(Vec3::ZERO, |a, b| a + b)
             / poly.vertices.len() as f32;
-        let center = Vec3::new(center.x as f32, center.y as f32, center.z as f32);
         for edge in poly.edges() {
             let (a, b) = edge;
 
@@ -560,22 +571,25 @@ fn debug_csg_system(
         }
     }
 
-    let mesh = to_bevy_mesh(world_csg, |face| true);
-    let mesh_handle = meshes.add(mesh);
-
     if let Some(rendered) = rendered.take() {
         commands.entity(rendered).despawn();
     }
 
-    *rendered = Some(
-        commands
-            .spawn((
-                Mesh3d(mesh_handle),
-                MeshMaterial3d(common.red_material.clone()),
-                Transform::from_scale(Vec3::splat(1.)),
-            ))
-            .id(),
-    );
+    let rendered_group = commands
+        .spawn((Transform::IDENTITY, Visibility::Inherited))
+        .id();
+    *rendered = Some(rendered_group);
+
+    let mesh_inside = to_bevy_mesh(world_csg, |face| !face.outside);
+    let mesh_inside_handle = meshes.add(mesh_inside);
+
+    commands.entity(rendered_group).with_children(|children| {
+        children.spawn((
+            Mesh3d(mesh_inside_handle),
+            MeshMaterial3d(common.red_material.clone()),
+            Transform::from_scale(Vec3::splat(1.)),
+        ));
+    });
 }
 
 fn to_bevy_mesh(csg: &CSG, mut filter_faces: impl FnMut(&SurfaceDetail) -> bool) -> Mesh {
@@ -656,8 +670,9 @@ fn setup(
         }),
         blue_material: materials.add(StandardMaterial {
             base_color_texture: Some(grid_texture.clone()),
-            base_color: Color::linear_rgb(0.4, 0.5, 0.96),
+            base_color: Color::linear_rgba(0.4, 0.5, 0.96, 0.2),
             perceptual_roughness: 1.0,
+            alpha_mode: AlphaMode::Blend,
             ..default()
         }),
         outside_material: materials.add(StandardMaterial {
@@ -700,6 +715,15 @@ fn setup(
     commands.spawn((
         DirectionalLight::default(),
         Transform::from_xyz(1786., 768., 900.).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+
+    // Secondary light
+    commands.spawn((
+        DirectionalLight {
+            color: Color::linear_rgb(0.5, 0.6, 1.0),
+            ..default()
+        },
+        Transform::from_xyz(-1786. / 3., 768. / 2., 900.).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 
