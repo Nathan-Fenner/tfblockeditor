@@ -1,6 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
-use bevy::{prelude::*, render::mesh::Indices};
+use bevy::{
+    prelude::*,
+    render::{mesh::Indices, view::RenderLayers},
+};
 use building::Building;
 use common_assets::Common;
 use csgrs::{csg::CSG as GenericCSG, polygon::Polygon};
@@ -186,6 +189,8 @@ fn segments_cross(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
 }
 
 fn edit_polygon_system(
+    mut commands: Commands,
+    common: Res<Common>,
     mut gizmos: Gizmos,
     mut points: Local<Vec<IVec2>>,
     ray_map: Res<bevy::picking::backend::ray::RayMap>,
@@ -342,6 +347,31 @@ fn edit_polygon_system(
                 // Create the new shape and insert it into the editor.
 
                 let mut points = std::mem::take(&mut *points);
+
+                for i in 0..points.len() {
+                    let p = points[i];
+                    let q = points[(i + 1) % points.len()];
+                    let p = grid_to_world(from_flat(p, 0));
+                    let q = grid_to_world(from_flat(q, 0));
+
+                    commands.spawn((
+                        Transform::from_translation((p + q) / 2.)
+                            .with_scale(Vec3::new(0.1 * VOXEL_SIZE, 0.005, p.distance(q)))
+                            .looking_at(p, Vec3::Y),
+                        Mesh3d(common.cube_mesh.clone()),
+                        MeshMaterial3d(common.xray_blue_material.clone()),
+                        RenderLayers::layer(7),
+                    ));
+                }
+                for p in &points {
+                    commands.spawn((
+                        Transform::from_translation(grid_to_world(from_flat(*p, 0)))
+                            .with_scale(Vec3::new(0.2, 0.01, 0.2) * VOXEL_SIZE),
+                        Mesh3d(common.cube_mesh.clone()),
+                        MeshMaterial3d(common.xray_blue_material.clone()),
+                        RenderLayers::layer(7),
+                    ));
+                }
 
                 if signed_polygon_area_2d(&points) < 0.0 {
                     points.reverse();
@@ -673,12 +703,10 @@ fn to_bevy_mesh(csg: &CSG, mut filter_faces: impl FnMut(&SurfaceDetail) -> bool)
     mesh
 }
 
-fn setup(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    asset_server: Res<AssetServer>,
-) {
+#[derive(Component)]
+struct XRayCamera;
+
+fn setup(mut commands: Commands) {
     commands.insert_resource(EditorWorld {
         buildings: Vec::new(),
     });
@@ -694,6 +722,19 @@ fn setup(
         Camera3d::default(),
         camera_and_light_transform,
         CameraControls::default(),
+        children![
+            // Insert a child camera which shows x-ray mode
+            (
+                Camera3d::default(),
+                XRayCamera,
+                RenderLayers::layer(7),
+                Camera {
+                    order: 1,
+                    clear_color: ClearColorConfig::None,
+                    ..default()
+                },
+            ),
+        ],
     ));
 
     // Light up the scene.

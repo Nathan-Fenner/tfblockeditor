@@ -7,6 +7,7 @@ pub struct Common {
     pub plane_mesh: Handle<Mesh>,
 
     pub gray_material: Handle<StandardMaterial>,
+    pub xray_blue_material: Handle<StandardMaterial>,
     pub blue_material: Handle<StandardMaterial>,
     pub red_material: Handle<StandardMaterial>,
 
@@ -44,11 +45,16 @@ pub fn setup_common(
             perceptual_roughness: 1.0,
             ..default()
         }),
+        xray_blue_material: materials.add(StandardMaterial {
+            base_color: Color::linear_rgb(0.4, 0.5, 0.96),
+            perceptual_roughness: 1.0,
+            unlit: true,
+            ..default()
+        }),
         blue_material: materials.add(StandardMaterial {
             base_color_texture: Some(grid_texture.clone()),
-            base_color: Color::linear_rgba(0.4, 0.5, 0.96, 0.2),
+            base_color: Color::linear_rgb(0.4, 0.5, 0.96),
             perceptual_roughness: 1.0,
-            alpha_mode: AlphaMode::Blend,
             ..default()
         }),
         outside_material: materials.add(StandardMaterial {
