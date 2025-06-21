@@ -1,9 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use bevy::{
-    prelude::*,
-    render::mesh::{Indices, PlaneMeshBuilder},
-};
+use bevy::{prelude::*, render::mesh::Indices};
 use building::Building;
 use common_assets::Common;
 use csgrs::{csg::CSG as GenericCSG, polygon::Polygon};
@@ -34,6 +31,7 @@ fn main() {
             meta_check: bevy::asset::AssetMetaCheck::Never,
             ..default()
         }))
+        .add_plugins(common_assets::CommonPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -406,15 +404,15 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
 
     let layers = [
         RoomLayer {
-            shift_y_floor: 0.,
-            shift_y_ceiling: 0.,
+            shift_y_floor: -0.1,
+            shift_y_ceiling: 0.1,
             wall_width: 0.,
             outside: true,
             out: &mut out_buffer_csg,
         },
         RoomLayer {
-            shift_y_floor: 0.1,
-            shift_y_ceiling: -0.1,
+            shift_y_floor: 0.0,
+            shift_y_ceiling: 0.0,
             wall_width: -0.1,
             outside: false,
             out: &mut room_interior_csg,
@@ -508,14 +506,6 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
         }
     }
 
-    println!("combining:");
-    for outer in out_buffer_csg.iter() {
-        println!("{:?}", outer);
-    }
-    for inner in room_interior_csg.iter() {
-        println!("{:?}", inner);
-    }
-
     let mut world_csg: CSG = CSG::new();
     for outer_csg in &out_buffer_csg {
         world_csg = world_csg.union(&outer_csg.tessellate());
@@ -525,14 +515,10 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
         world_csg = world_csg.difference(&inner_csg.tessellate());
     }
 
-    println!("prepare to tesselate");
-
     rendered_csg.0 =
         world_csg
             .tessellate()
             .scale(VOXEL_SIZE as f64, VOXEL_SIZE as f64, VOXEL_SIZE as f64);
-
-    println!("tesselated");
 }
 fn debug_csg_system(
     mut commands: Commands,
@@ -652,51 +638,9 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     asset_server: Res<AssetServer>,
 ) {
-    let grid_texture: Handle<Image> = asset_server.load("grid.png");
-    let common = Common {
-        cube_mesh: meshes.add(Cuboid::new(1., 1., 1.).mesh()),
-        plane_mesh: meshes.add(PlaneMeshBuilder::default().normal(Dir3::Z).build()),
-
-        gray_material: materials.add(StandardMaterial {
-            base_color_texture: Some(grid_texture.clone()),
-            perceptual_roughness: 1.0,
-            ..default()
-        }),
-        red_material: materials.add(StandardMaterial {
-            base_color_texture: Some(grid_texture.clone()),
-            base_color: Color::linear_rgb(0.95, 0.5, 0.4),
-            perceptual_roughness: 1.0,
-            ..default()
-        }),
-        blue_material: materials.add(StandardMaterial {
-            base_color_texture: Some(grid_texture.clone()),
-            base_color: Color::linear_rgba(0.4, 0.5, 0.96, 0.2),
-            perceptual_roughness: 1.0,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        }),
-        outside_material: materials.add(StandardMaterial {
-            base_color: Color::linear_rgb(0.3, 0.3, 0.3),
-            base_color_texture: Some(grid_texture.clone()),
-            perceptual_roughness: 1.0,
-            ..default()
-        }),
-        sky_material: materials.add(StandardMaterial {
-            base_color_texture: Some(asset_server.load("grid.png")),
-            base_color: Color::linear_rgb(0.3, 0.7, 0.9),
-            perceptual_roughness: 1.0,
-            emissive: LinearRgba::new(0.1, 0.2, 0.3, 1.0),
-
-            alpha_mode: AlphaMode::Mask(0.5),
-            ..default()
-        }),
-    };
-
     commands.insert_resource(EditorWorld {
         buildings: Vec::new(),
     });
-
-    commands.insert_resource(common);
 
     commands.insert_resource(RenderedCsg(CSG::new()));
 
