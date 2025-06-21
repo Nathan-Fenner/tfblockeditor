@@ -13,16 +13,19 @@ pub type CSG = GenericCSG<SurfaceDetail>;
 
 use voxels::VOXEL_SIZE;
 
+use crate::{
+    editor_state::EditorWorld,
+    geometry_utils::{BevyToNalgebra, signed_polygon_area_2d},
+};
+
 pub mod building;
 pub mod common_assets;
+pub mod editor_state;
 pub mod flycam;
+pub mod geometry_utils;
+pub mod js_ffi;
 pub mod voxel_editor;
 pub mod voxels;
-
-#[derive(Resource)]
-struct EditorWorld {
-    buildings: Vec<Building>,
-}
 
 fn main() {
     App::new()
@@ -47,53 +50,7 @@ fn main() {
                 .chain(),
         )
         .add_plugins(flycam::FlyCameraPlugin)
-        // .add_systems(
-        //     Update,
-        //     (
-        //         editor_record_system,
-        //         editor_select_system,
-        //         editor_select_preview_system,
-        //         editor_undo_system,
-        //         editor_visualize_area_system,
-        //     )
-        //         .chain(),
-        // )
         .run();
-}
-
-trait As2d {
-    fn coord_x(&self) -> f32;
-    fn coord_y(&self) -> f32;
-}
-
-impl As2d for Vec2 {
-    fn coord_x(&self) -> f32 {
-        self.x
-    }
-    fn coord_y(&self) -> f32 {
-        self.y
-    }
-}
-impl As2d for IVec2 {
-    fn coord_x(&self) -> f32 {
-        self.x as f32
-    }
-    fn coord_y(&self) -> f32 {
-        self.y as f32
-    }
-}
-
-fn signed_polygon_area_2d(points: &[impl As2d]) -> f32 {
-    let mut sum = 0.0;
-    if points.len() <= 2 {
-        return 0.0;
-    }
-    for i in 0..points.len() {
-        let j = (i + 1) % points.len();
-        sum += (points[i].coord_y() + points[j].coord_y())
-            * (points[i].coord_x() - points[j].coord_x());
-    }
-    sum * 0.5
 }
 
 fn draw_grid_system(mut gizmos: Gizmos) {
@@ -132,7 +89,7 @@ fn to_flat(p: IVec3) -> IVec2 {
 fn draw_building_outlines_system(mut gizmos: Gizmos, editor_world: Res<EditorWorld>) {
     let color_active = Color::linear_rgb(1., 1., 0.5);
 
-    for building in editor_world.buildings.iter() {
+    for building in editor_world.buildings().iter() {
         let points = building.points();
         let floor_y = building.floor_y();
 
@@ -377,9 +334,7 @@ fn edit_polygon_system(
                     points.reverse();
                 }
 
-                editor_world
-                    .buildings
-                    .push(Building::new(editing_plane_y, points))
+                editor_world.insert_building(Building::new(editing_plane_y, points))
             } else if new_point_is_valid {
                 points.push(to_flat(mouse_point_grid));
             } else {
@@ -412,39 +367,6 @@ fn edit_polygon_system(
     }
 }
 
-trait BevyToNalgebra {
-    type Point;
-    fn to_point(&self) -> Self::Point;
-    type Vector;
-    fn to_vector(&self) -> Self::Vector;
-}
-
-impl BevyToNalgebra for Vec2 {
-    type Point = nalgebra::Point2<f64>;
-
-    fn to_point(&self) -> Self::Point {
-        nalgebra::Point2::new(self.x as f64, self.y as f64)
-    }
-
-    type Vector = nalgebra::Vector2<f64>;
-
-    fn to_vector(&self) -> Self::Vector {
-        nalgebra::Vector2::new(self.x as f64, self.y as f64)
-    }
-}
-impl BevyToNalgebra for Vec3 {
-    type Point = nalgebra::Point3<f64>;
-
-    fn to_point(&self) -> Self::Point {
-        nalgebra::Point3::new(self.x as f64, self.y as f64, self.z as f64)
-    }
-    type Vector = nalgebra::Vector3<f64>;
-
-    fn to_vector(&self) -> Self::Vector {
-        nalgebra::Vector3::new(self.x as f64, self.y as f64, self.z as f64)
-    }
-}
-
 #[derive(Resource)]
 struct RenderedCsg(CSG);
 
@@ -456,10 +378,6 @@ pub struct SurfaceDetail {
 fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<RenderedCsg>) {
     if !world.is_changed() {
         return;
-    }
-
-    fn grid_to_world(p: IVec3) -> Vec3 {
-        p.as_vec3()
     }
 
     let mut out_buffer_csg: Vec<CSG> = Vec::new();
@@ -491,7 +409,7 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
     ];
 
     for layer in layers {
-        for room in world.buildings.iter() {
+        for room in world.buildings().iter() {
             let y_top = (room.floor_y() + 2) as f64 + layer.shift_y_ceiling;
             let y_bot = room.floor_y() as f64 + layer.shift_y_floor;
             let points = room.points();
@@ -707,10 +625,7 @@ fn to_bevy_mesh(csg: &CSG, mut filter_faces: impl FnMut(&SurfaceDetail) -> bool)
 struct XRayCamera;
 
 fn setup(mut commands: Commands) {
-    commands.insert_resource(EditorWorld {
-        buildings: Vec::new(),
-    });
-
+    commands.insert_resource(EditorWorld::new());
     commands.insert_resource(RenderedCsg(CSG::new()));
 
     // Transform for the camera and lighting, looking at (0,0,0) (the position of the mesh).
@@ -751,29 +666,4 @@ fn setup(mut commands: Commands) {
         },
         Transform::from_xyz(-1786. / 3., 768. / 2., 900.).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-}
-
-static EDITABLE_LEVEL: std::sync::Mutex<Option<vmf_forge::VmfFile>> = std::sync::Mutex::new(None);
-
-#[wasm_bindgen::prelude::wasm_bindgen]
-extern "C" {
-    /// Send a message to the client.
-    pub fn tfbe_ffi_alert(s: &str);
-}
-
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn tfbe_ffi_load_file(file_contents: &str) {
-    tfbe_ffi_alert(&format!("Loading file with {} bytes", file_contents.len()));
-
-    let parsed_file: Result<vmf_forge::VmfFile, _> = vmf_forge::VmfFile::parse(file_contents);
-
-    match parsed_file {
-        Ok(parsed_file) => {
-            *EDITABLE_LEVEL.lock().unwrap() = Some(parsed_file);
-            tfbe_ffi_alert("Loaded file!");
-        }
-        Err(err) => {
-            tfbe_ffi_alert(&format!("Failed to parse file: {err}"));
-        }
-    }
 }
