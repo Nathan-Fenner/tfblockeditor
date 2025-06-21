@@ -59,6 +59,41 @@ fn main() {
         .run();
 }
 
+trait As2d {
+    fn coord_x(&self) -> f32;
+    fn coord_y(&self) -> f32;
+}
+
+impl As2d for Vec2 {
+    fn coord_x(&self) -> f32 {
+        self.x
+    }
+    fn coord_y(&self) -> f32 {
+        self.y
+    }
+}
+impl As2d for IVec2 {
+    fn coord_x(&self) -> f32 {
+        self.x as f32
+    }
+    fn coord_y(&self) -> f32 {
+        self.y as f32
+    }
+}
+
+fn signed_polygon_area_2d(points: &[impl As2d]) -> f32 {
+    let mut sum = 0.0;
+    if points.len() <= 2 {
+        return 0.0;
+    }
+    for i in 0..points.len() {
+        let j = (i + 1) % points.len();
+        sum += (points[i].coord_y() + points[j].coord_y())
+            * (points[i].coord_x() - points[j].coord_x());
+    }
+    sum * 0.5
+}
+
 fn draw_grid_system(mut gizmos: Gizmos) {
     for x in -20..=20 {
         for z in -20..=20 {
@@ -305,10 +340,17 @@ fn edit_polygon_system(
 
         if mouse_button.just_pressed(MouseButton::Left) {
             if points.len() >= 3 && to_flat(mouse_point_grid) == points[0] && new_point_is_valid {
-                // Complete the shape.
+                // Create the new shape and insert it into the editor.
+
+                let mut points = std::mem::take(&mut *points);
+
+                if signed_polygon_area_2d(&points) < 0.0 {
+                    points.reverse();
+                }
+
                 editor_world
                     .buildings
-                    .push(Building::new(editing_plane_y, std::mem::take(&mut *points)))
+                    .push(Building::new(editing_plane_y, points))
             } else if new_point_is_valid {
                 points.push(to_flat(mouse_point_grid));
             } else {
