@@ -12,7 +12,6 @@ use voxels::VOXEL_SIZE;
 
 pub mod building;
 pub mod common_assets;
-pub mod csg;
 pub mod flycam;
 pub mod voxel_editor;
 pub mod voxels;
