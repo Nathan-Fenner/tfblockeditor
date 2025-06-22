@@ -30,4 +30,8 @@ impl Building {
     pub fn points(&self) -> &[IVec2] {
         &self.outline
     }
+
+    pub fn points_mut(&mut self) -> &mut Vec<IVec2> {
+        &mut self.outline
+    }
 }
