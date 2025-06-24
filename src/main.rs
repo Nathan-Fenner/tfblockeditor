@@ -23,6 +23,7 @@ pub mod editor_state;
 pub mod flycam;
 pub mod geometry_utils;
 pub mod js_ffi;
+pub mod preview;
 pub mod voxel_editor;
 pub mod voxels;
 

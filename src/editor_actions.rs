@@ -5,19 +5,21 @@ use crate::building::Building;
 use crate::common_assets::Common;
 use crate::editor_state::{EditorWorld, from_flat, grid_to_world, to_flat, world_to_grid};
 use crate::geometry_utils::{point_closest_to_segment, segments_cross, signed_polygon_area_2d};
+use crate::preview::Previewer;
 use crate::voxels::VOXEL_SIZE;
 
 pub struct EditorActionPlugin;
 
 impl Plugin for EditorActionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, editor_insert_building_system);
+        app.add_systems(
+            Update,
+            (editor_insert_building_system, preview_xray_buildings_system).chain(),
+        );
     }
 }
 
 pub fn editor_insert_building_system(
-    mut commands: Commands,
-    common: Res<Common>,
     mut gizmos: Gizmos,
     mut points: Local<Vec<IVec2>>,
     ray_map: Res<bevy::picking::backend::ray::RayMap>,
@@ -175,31 +177,6 @@ pub fn editor_insert_building_system(
 
                 let mut points = std::mem::take(&mut *points);
 
-                for i in 0..points.len() {
-                    let p = points[i];
-                    let q = points[(i + 1) % points.len()];
-                    let p = grid_to_world(from_flat(p, 0));
-                    let q = grid_to_world(from_flat(q, 0));
-
-                    commands.spawn((
-                        Transform::from_translation((p + q) / 2.)
-                            .with_scale(Vec3::new(0.1 * VOXEL_SIZE, 0.005, p.distance(q)))
-                            .looking_at(p, Vec3::Y),
-                        Mesh3d(common.cube_mesh.clone()),
-                        MeshMaterial3d(common.xray_blue_material.clone()),
-                        RenderLayers::layer(7),
-                    ));
-                }
-                for p in &points {
-                    commands.spawn((
-                        Transform::from_translation(grid_to_world(from_flat(*p, 0)))
-                            .with_scale(Vec3::new(0.2, 0.01, 0.2) * VOXEL_SIZE),
-                        Mesh3d(common.cube_mesh.clone()),
-                        MeshMaterial3d(common.xray_blue_material.clone()),
-                        RenderLayers::layer(7),
-                    ));
-                }
-
                 if signed_polygon_area_2d(&points) < 0.0 {
                     points.reverse();
                 }
@@ -234,5 +211,69 @@ pub fn editor_insert_building_system(
         };
 
         gizmos.line(point_a, point_b, color);
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+enum XrayPreview {
+    Segment(IVec3, IVec3),
+    Point(IVec3),
+}
+
+fn preview_xray_buildings_system(
+    mut commands: Commands,
+    mut preview: Local<Previewer<XrayPreview>>,
+    common: Res<Common>,
+    editor_world: Res<EditorWorld>,
+) {
+    if !editor_world.is_changed() {
+        return;
+    }
+    println!("rescan buildings");
+
+    for building in editor_world.buildings() {
+        let points = building.points();
+
+        for i in 0..points.len() {
+            let p = points[i];
+            let q = points[(i + 1) % points.len()];
+
+            let p = from_flat(p, 0);
+            let q = from_flat(q, 0);
+
+            let world_p = grid_to_world(p);
+            let world_q = grid_to_world(q);
+
+            preview.render(&XrayPreview::Segment(p, q), || {
+                commands
+                    .spawn((
+                        Transform::from_translation((world_p + world_q) / 2.)
+                            .with_scale(Vec3::new(
+                                0.1 * VOXEL_SIZE,
+                                0.005,
+                                world_p.distance(world_q),
+                            ))
+                            .looking_at(world_p, Vec3::Y),
+                        Mesh3d(common.cube_mesh.clone()),
+                        MeshMaterial3d(common.xray_blue_material.clone()),
+                        RenderLayers::layer(7),
+                    ))
+                    .id()
+            });
+        }
+        for &p in points.iter() {
+            let p = from_flat(p, 0);
+            preview.render(&XrayPreview::Point(p), || {
+                commands
+                    .spawn((
+                        Transform::from_translation(grid_to_world(p))
+                            .with_scale(Vec3::new(0.2, 0.01, 0.2) * VOXEL_SIZE),
+                        Mesh3d(common.cube_mesh.clone()),
+                        MeshMaterial3d(common.xray_blue_material.clone()),
+                        RenderLayers::layer(7),
+                    ))
+                    .id()
+            });
+        }
     }
 }
