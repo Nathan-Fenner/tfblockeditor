@@ -1,10 +1,22 @@
 use bevy::prelude::*;
 
-use crate::{building::Building, voxels::VOXEL_SIZE};
+use crate::{
+    building::{Building, BuildingValidity},
+    voxels::VOXEL_SIZE,
+};
 
 #[derive(Resource)]
 pub struct EditorWorld {
     buildings: Vec<Building>,
+    editor_tool: EditorTool,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum EditorTool {
+    /// Create a new building
+    CreateBuilding,
+    /// Select a building
+    SelectBuilding,
 }
 
 impl Default for EditorWorld {
@@ -18,7 +30,18 @@ impl EditorWorld {
     pub fn new() -> Self {
         Self {
             buildings: Vec::new(),
+            editor_tool: EditorTool::SelectBuilding,
         }
+    }
+
+    /// Get the current tool.
+    pub fn tool(&self) -> &EditorTool {
+        &self.editor_tool
+    }
+
+    /// Sets the current tool.
+    pub fn set_tool(&mut self, tool: EditorTool) {
+        self.editor_tool = tool;
     }
 
     /// Get the current buildings in the editor.
@@ -29,6 +52,13 @@ impl EditorWorld {
     /// Add a new building to the editor.
     pub fn insert_building(&mut self, building: Building) {
         self.buildings.push(building);
+    }
+
+    /// Changes the position of a point in a building.
+    /// Panics if the resulting building is invalid.
+    pub fn set_building_point(&mut self, building: usize, point: usize, p: IVec2) {
+        self.buildings[building].outline[point] = p;
+        assert!(self.buildings[building].is_valid(BuildingValidity::default()));
     }
 
     /// Translate an existing building by the specified amount.

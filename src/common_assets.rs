@@ -8,6 +8,7 @@ pub struct Common {
 
     pub gray_material: Handle<StandardMaterial>,
     pub xray_blue_material: Handle<StandardMaterial>,
+    pub ui_gold_material: Handle<StandardMaterial>,
     pub blue_material: Handle<StandardMaterial>,
     pub red_material: Handle<StandardMaterial>,
 
@@ -47,6 +48,12 @@ pub fn setup_common(
         }),
         xray_blue_material: materials.add(StandardMaterial {
             base_color: Color::linear_rgb(0.4, 0.5, 0.96),
+            perceptual_roughness: 1.0,
+            unlit: true,
+            ..default()
+        }),
+        ui_gold_material: materials.add(StandardMaterial {
+            base_color: Color::linear_rgb(1.0, 0.8, 0.4),
             perceptual_roughness: 1.0,
             unlit: true,
             ..default()

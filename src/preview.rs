@@ -14,6 +14,23 @@ pub struct Previewer<K> {
     cache: HashMap<K, PreviewState>,
 }
 
+pub struct PreviewCollector<'w, 's, 'a, K> {
+    pub commands: &'a mut Commands<'w, 's>,
+    pub previewer: &'a mut Previewer<K>,
+}
+
+impl<K> Drop for PreviewCollector<'_, '_, '_, K> {
+    fn drop(&mut self) {
+        self.previewer.collect_garbage(self.commands);
+    }
+}
+
+impl<K: Eq + Clone + Hash> PreviewCollector<'_, '_, '_, K> {
+    pub fn render(&mut self, key: &K, render: impl FnOnce(&mut Commands) -> Entity) {
+        self.previewer.render(key, || render(self.commands))
+    }
+}
+
 impl<K> Previewer<K> {
     /// Create a new empty previewer.
     pub fn new() -> Self {
@@ -58,6 +75,16 @@ impl<K> Previewer<K> {
                 false
             }
         });
+    }
+
+    pub fn collect_scope<'a, 'w, 's>(
+        &'a mut self,
+        commands: &'a mut Commands<'w, 's>,
+    ) -> PreviewCollector<'w, 's, 'a, K> {
+        PreviewCollector {
+            previewer: self,
+            commands,
+        }
     }
 }
 

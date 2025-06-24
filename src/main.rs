@@ -233,7 +233,7 @@ fn render_world_system(world: Res<EditorWorld>, mut rendered_csg: ResMut<Rendere
 }
 fn debug_csg_system(
     mut commands: Commands,
-    mut gizmos: Gizmos,
+    // mut gizmos: Gizmos,
     world_csg: Res<RenderedCsg>,
     mut meshes: ResMut<Assets<Mesh>>,
     common: Res<Common>,
@@ -244,29 +244,6 @@ fn debug_csg_system(
         return;
     }
     let world_csg = &world_csg.0;
-    for poly in world_csg.polygons.iter() {
-        let center: Vec3 = poly
-            .vertices
-            .iter()
-            .map(|v| Vec3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32))
-            .fold(Vec3::ZERO, |a, b| a + b)
-            / poly.vertices.len() as f32;
-        for edge in poly.edges() {
-            let (a, b) = edge;
-
-            let a = a.pos;
-            let b = b.pos;
-            let a = Vec3::new(a.x as f32, a.y as f32, a.z as f32);
-            let b = Vec3::new(b.x as f32, b.y as f32, b.z as f32);
-
-            let a = a.lerp(center, 0.1);
-            let b = b.lerp(center, 0.1);
-            // let a = a.lerp(center, 0.1);
-            // let b = b.lerp(center, 0.1);
-            gizmos.line(a, a.lerp(b, 0.5), Color::linear_rgb(1., 0., 0.));
-            gizmos.line(a.lerp(b, 0.5), b, Color::linear_rgb(0., 0., 1.));
-        }
-    }
 
     if let Some(rendered) = rendered.take() {
         commands.entity(rendered).despawn();
